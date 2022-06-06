@@ -1,6 +1,5 @@
 package com.github.jizoumaru;
 
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -8,8 +7,37 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 
-public abstract class Stream<T> implements Iterator<T> {
+public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
+	public static class Holder<T> {
+		public static <T> Holder<T> of(T value) {
+			return new Holder<T>(value, true);
+		}
+
+		public static <T> Holder<T> none() {
+			return new Holder<T>(null, false);
+		}
+
+		private final T value;
+		private final boolean exist;
+
+		private Holder(T value, boolean exist) {
+			this.value = value;
+			this.exist = exist;
+		}
+
+		public boolean exists() {
+			return exist;
+		}
+
+		public T value() {
+			if (exist) {
+				return value;
+			}
+			throw new NoSuchElementException();
+		}
+	}
 
 	public interface Predicate<T> {
 		boolean test(T value);
@@ -66,174 +94,29 @@ public abstract class Stream<T> implements Iterator<T> {
 		}
 	}
 
-	public static class Nullable<T> {
-		public static <T> Nullable<T> of(T value) {
-			return new Nullable<>(value, true);
-		}
-
-		public static <T> Nullable<T> none() {
-			return new Nullable<>(null, false);
-		}
-
-		private final T value;
-		private final boolean exist;
-
-		private Nullable(T value, boolean exist) {
-			this.value = value;
-			this.exist = exist;
-		}
-
-		public T value() {
-			if (exist) {
-				return value;
-			} else {
-				throw new NoSuchElementException();
-			}
-		}
-
-		public boolean exists() {
-			return exist;
-		}
-	}
-
-	public static <T> Stream<T> concat(final Stream<T> a, final Stream<T> b) {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				if (a.hasNext()) {
-					return Nullable.of(a.next());
-				}
-
-				if (b.hasNext()) {
-					return Nullable.of(b.next());
-				}
-
-				return Nullable.none();
-			}
-		};
-	}
-
-	public static <T> Stream<T> empty() {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				return Nullable.none();
-			}
-		};
-	}
-
-	public static <T> Stream<T> generate(final Supplier<T> s) {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				return Nullable.of(s.get());
-			}
-		};
-	}
-
-	public static <T> Stream<T> iterate(final T seed, final Predicate<? super T> hasNext, final UnaryOperator<T> next) {
-		return new Stream<T>() {
-			Nullable<T> val;
-
-			@Override
-			protected Nullable<T> get() {
-				if (val == null) {
-					val = Nullable.of(seed);
-				} else {
-					val = Nullable.of(next.apply(val.value()));
-				}
-
-				if (hasNext.test(val.value())) {
-					return val;
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
-	}
-
-	public static <T> Stream<T> iterate(final T seed, final UnaryOperator<T> f) {
-		return new Stream<T>() {
-			Nullable<T> val;
-
-			@Override
-			protected Nullable<T> get() {
-				if (val == null) {
-					val = Nullable.of(seed);
-				} else {
-					val = Nullable.of(f.apply(val.value()));
-				}
-				return val;
-			}
-		};
-	}
-
-	public static <T> Stream<T> of(final T t) {
-		return new Stream<T>() {
-			Nullable<T> val;
-
-			@Override
-			protected Nullable<T> get() {
-				if (val == null) {
-					val = Nullable.of(t);
-				} else {
-					val = Nullable.none();
-				}
-				return val;
-			}
-		};
-
-	}
-
-	@SafeVarargs
-	public static <T> Stream<T> of(final T... values) {
-		return new Stream<T>() {
-			int i = 0;
-
-			@Override
-			protected Nullable<T> get() {
-				if (i < values.length) {
-					return Nullable.of(values[i++]);
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
-
-	}
-
-	public static <T> Stream<T> of(final Iterator<T> iterator) {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				if (iterator.hasNext()) {
-					return Nullable.of(iterator.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
-	}
-
-	private Nullable<T> value;
+	private Holder<T> holder = null;
+	private boolean closed = false;
 
 	@Override
 	public boolean hasNext() {
-		if (value == null) {
-			value = get();
+		if (holder == null) {
+			holder = fetch();
 		}
-		return value.exists();
+		return holder.exists();
+	}
+
+	public T peek() {
+		if (hasNext()) {
+			return holder.value();
+		}
+		throw new NoSuchElementException();
 	}
 
 	@Override
 	public T next() {
-		if (hasNext()) {
-			Nullable<T> ret = value;
-			value = null;
-			return ret.value();
-		} else {
-			throw new NoSuchElementException();
-		}
+		T value = peek();
+		holder = null;
+		return value;
 	}
 
 	@Override
@@ -241,73 +124,614 @@ public abstract class Stream<T> implements Iterator<T> {
 		throw new RuntimeException("not suported");
 	}
 
-	protected abstract Nullable<T> get();
+	protected abstract Holder<T> fetch();
 
-	public Stream<T> filter(final Predicate<? super T> predicate) {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				while (Stream.this.hasNext()) {
-					T val = Stream.this.next();
-					if (predicate.test(val)) {
-						return Nullable.of(val);
-					}
-				}
-				return Nullable.none();
+	protected abstract void internalClose();
+
+	@Override
+	public void close() {
+		if (!closed) {
+			internalClose();
+			closed = true;
+		}
+	}
+
+	static class ConcatStream<T> extends Stream<T> {
+		private final Stream<T> left;
+		private final Stream<T> right;
+
+		public ConcatStream(Stream<T> left, Stream<T> right) {
+			this.left = left;
+			this.right = right;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (left.hasNext()) {
+				return Holder.of(left.next());
 			}
-		};
+
+			if (right.hasNext()) {
+				return Holder.of(right.next());
+			}
+
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				left.close();
+			} finally {
+				right.close();
+			}
+		}
+	}
+
+	static class EmptyStream<T> extends Stream<T> {
+		@Override
+		protected Holder<T> fetch() {
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class GenerateStream<T> extends Stream<T> {
+		public final Supplier<T> supplier;
+
+		public GenerateStream(Supplier<T> supplier) {
+			this.supplier = supplier;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			return Holder.of(supplier.get());
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class IterateFinateStream<T> extends Stream<T> {
+		private final T seed;
+		private final Predicate<? super T> hasNext;
+		private final UnaryOperator<T> next;
+		private Holder<T> holder;
+
+		public IterateFinateStream(T seed, Predicate<? super T> hasNext, UnaryOperator<T> next) {
+			this.seed = seed;
+			this.hasNext = hasNext;
+			this.next = next;
+			this.holder = null;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			T value = holder == null
+				? seed
+				: next.apply(holder.value());
+
+			holder = hasNext.test(value)
+				? Holder.of(value)
+				: Holder.none();
+
+			return holder;
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class IterateInfiniteStream<T> extends Stream<T> {
+		private final T seed;
+		private final UnaryOperator<T> next;
+		private Holder<T> holder;
+
+		public IterateInfiniteStream(T seed, UnaryOperator<T> next) {
+			this.seed = seed;
+			this.next = next;
+			this.holder = null;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			T value = holder == null
+				? seed
+				: next.apply(holder.value());
+
+			holder = Holder.of(value);
+			return holder;
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class ArrayStream<T> extends Stream<T> {
+		private final T[] array;
+		private int index;
+
+		public ArrayStream(T[] array) {
+			this.array = array;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			return index < array.length
+				? Holder.of(array[index++])
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class IterableStream<T> extends Stream<T> {
+		private final Iterable<T> iterable;
+		private Iterator<T> iterator;
+
+		public IterableStream(Iterable<T> iterable) {
+			this.iterable = iterable;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (iterator == null) {
+				iterator = iterable.iterator();
+			}
+			return iterator.hasNext()
+				? Holder.of(iterator.next())
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class IteratorStream<T> extends Stream<T> {
+		private final Iterator<T> iterator;
+
+		public IteratorStream(Iterator<T> iterator) {
+			this.iterator = iterator;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			return iterator.hasNext()
+				? Holder.of(iterator.next())
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	static class FilterStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final Predicate<T> predicate;
+
+		public FilterStream(Stream<T> stream, Predicate<T> predicate) {
+			this.stream = stream;
+			this.predicate = predicate;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			while (stream.hasNext()) {
+				T value = stream.next();
+				if (predicate.test(value)) {
+					return Holder.of(value);
+				}
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class MapStream<T, U> extends Stream<U> {
+		private final Stream<T> stream;
+		private final Function<T, U> mapper;
+
+		public MapStream(Stream<T> stream, Function<T, U> mapper) {
+			this.stream = stream;
+			this.mapper = mapper;
+		}
+
+		@Override
+		protected Holder<U> fetch() {
+			return stream.hasNext()
+				? Holder.of(mapper.apply(stream.next()))
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class FlatMapStream<T, U> extends Stream<U> {
+		private final Stream<T> stream;
+		private final Function<T, Stream<U>> mapper;
+		private Stream<U> inner;
+
+		public FlatMapStream(Stream<T> stream, Function<T, Stream<U>> mapper) {
+			this.stream = stream;
+			this.mapper = mapper;
+			this.inner = new EmptyStream<U>();
+		}
+
+		@Override
+		protected Holder<U> fetch() {
+			while (!inner.hasNext() && stream.hasNext()) {
+				inner = mapper.apply(stream.next());
+			}
+			return inner.hasNext()
+				? Holder.of(inner.next())
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			try {
+				inner.close();
+			} finally {
+				stream.close();
+			}
+		}
+
+	}
+
+	static class DistinctStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private Iterator<T> iterator;
+
+		public DistinctStream(Stream<T> stream) {
+			this.stream = stream;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (iterator == null) {
+				LinkedHashSet<T> set = new LinkedHashSet<>();
+				while (stream.hasNext()) {
+					set.add(stream.next());
+				}
+				iterator = set.iterator();
+			}
+
+			return iterator.hasNext()
+				? Holder.of(iterator.next())
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class SortedStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final Comparator<? super T> comparator;
+		private Iterator<T> iterator;
+
+		public SortedStream(Stream<T> stream, Comparator<? super T> comparator) {
+			this.stream = stream;
+			this.comparator = comparator;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (iterator == null) {
+				ArrayList<T> list = new ArrayList<T>();
+				while (stream.hasNext()) {
+					list.add(stream.next());
+				}
+				Collections.sort(list, comparator);
+				iterator = list.iterator();
+			}
+
+			return iterator.hasNext()
+				? Holder.of(iterator.next())
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+
+	}
+
+	static class PeekStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final Consumer<? super T> action;
+
+		public PeekStream(Stream<T> stream, Consumer<? super T> action) {
+			this.stream = stream;
+			this.action = action;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (stream.hasNext()) {
+				T value = stream.next();
+				action.accept(value);
+				return Holder.of(value);
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class LimitStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final long count;
+		private long index;
+
+		public LimitStream(Stream<T> stream, long count) {
+			this.stream = stream;
+			this.count = count;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (index < count && stream.hasNext()) {
+				index++;
+				return Holder.of(stream.next());
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+
+	}
+
+	static class SkipStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final long count;
+		private long index;
+
+		public SkipStream(Stream<T> stream, long count) {
+			this.stream = stream;
+			this.count = count;
+			this.index = 0;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			while (index < count && stream.hasNext()) {
+				index++;
+				stream.next();
+			}
+
+			return stream.hasNext()
+				? Holder.of(stream.next())
+				: Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+
+	}
+
+	static class TakeWhileStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final Predicate<? super T> predicate;
+
+		public TakeWhileStream(Stream<T> stream, Predicate<? super T> predicate) {
+			this.stream = stream;
+			this.predicate = predicate;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (stream.hasNext()) {
+				T value = stream.next();
+				if (predicate.test(value)) {
+					return Holder.of(value);
+				}
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class PartitionCountStream<T> extends Stream<Stream<T>> {
+		private final Stream<T> stream;
+		private final int count;
+		int index;
+
+		public PartitionCountStream(Stream<T> stream, int count) {
+			this.stream = stream;
+			this.count = count;
+			this.index = count;
+		}
+
+		@SuppressWarnings("resource")
+		@Override
+		protected Holder<Stream<T>> fetch() {
+			while (index < count && stream.hasNext()) {
+				stream.next();
+				index++;
+			}
+
+			if (stream.hasNext()) {
+				index = 0;
+				return Holder.of(new PartitionCountInternalStream<T>(stream, count, this));
+			}
+
+			return Holder.<Stream<T>>none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class PartitionCountInternalStream<T> extends Stream<T> {
+		private final Stream<T> stream;
+		private final int count;
+		private final PartitionCountStream<T> outer;
+
+		public PartitionCountInternalStream(Stream<T> stream, int count, PartitionCountStream<T> outer) {
+			this.stream = stream;
+			this.count = count;
+			this.outer = outer;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (outer.index < count && stream.hasNext()) {
+				outer.index++;
+				return Holder.of(stream.next());
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class PartitionByStream<T, K> extends Stream<Stream<T>> {
+		private final Stream<T> stream;
+		private final Function<T, K> keyFactory;
+		private Holder<K> keyHolder;
+
+		public PartitionByStream(Stream<T> stream, Function<T, K> keyFactory) {
+			this.stream = stream;
+			this.keyFactory = keyFactory;
+			this.keyHolder = Holder.none();
+		}
+
+		@SuppressWarnings("resource")
+		@Override
+		protected Holder<Stream<T>> fetch() {
+			if (keyHolder.exists()) {
+				while (stream.hasNext()
+					&& Objects.equals(keyHolder.value(), keyFactory.apply(stream.peek()))) {
+					stream.next();
+				}
+				keyHolder = Holder.none();
+			}
+
+			if (stream.hasNext()) {
+				keyHolder = Holder.of(keyFactory.apply(stream.peek()));
+				return Holder.of(new PartitionInternalStream<T, K>(stream, keyFactory, keyHolder.value()));
+			}
+
+			return Holder.<Stream<T>>none();
+		}
+
+		@Override
+		protected void internalClose() {
+			stream.close();
+		}
+	}
+
+	static class PartitionInternalStream<T, K> extends Stream<T> {
+		private final Stream<T> stream;
+		private final Function<T, K> keyFactory;
+		private final K key;
+
+		public PartitionInternalStream(Stream<T> stream, Function<T, K> keyFactory, K key) {
+			this.stream = stream;
+			this.keyFactory = keyFactory;
+			this.key = key;
+		}
+
+		@Override
+		protected Holder<T> fetch() {
+			if (stream.hasNext()
+				&& Objects.equals(key, keyFactory.apply(stream.peek()))) {
+				return Holder.of(stream.next());
+			}
+			return Holder.none();
+		}
+
+		@Override
+		protected void internalClose() {
+		}
+	}
+
+	public static <T> Stream<T> concat(final Stream<T> a, final Stream<T> b) {
+		return new ConcatStream<T>(a, b);
+	}
+
+	public static <T> Stream<T> empty() {
+		return new EmptyStream<T>();
+	}
+
+	public static <T> Stream<T> generate(final Supplier<T> supplier) {
+		return new GenerateStream<T>(supplier);
+	}
+
+	public static <T> Stream<T> iterate(final T seed, final Predicate<? super T> hasNext, final UnaryOperator<T> next) {
+		return new IterateFinateStream<T>(seed, hasNext, next);
+	}
+
+	public static <T> Stream<T> iterate(final T seed, final UnaryOperator<T> next) {
+		return new IterateInfiniteStream<T>(seed, next);
+	}
+
+	@SafeVarargs
+	public static <T> Stream<T> of(final T... values) {
+		return new ArrayStream<T>(values);
+	}
+
+	public static <T> Stream<T> of(final Iterable<T> iterable) {
+		return new IterableStream<T>(iterable);
+	}
+
+	public static <T> Stream<T> of(final Iterator<T> iterator) {
+		return new IteratorStream<T>(iterator);
+	}
+
+	public Stream<T> filter(final Predicate<T> predicate) {
+		return new FilterStream<T>(this, predicate);
 	}
 
 	public <R> Stream<R> map(final Function<T, R> mapper) {
-		return new Stream<R>() {
-			@Override
-			protected Nullable<R> get() {
-				if (Stream.this.hasNext()) {
-					return Nullable.of(mapper.apply(Stream.this.next()));
-				}
-				return Nullable.none();
-			}
-		};
+		return new MapStream<T, R>(this, mapper);
 	}
 
 	public <R> Stream<R> flatMap(final Function<T, Stream<R>> mapper) {
-		return new Stream<R>() {
-			Stream<R> inner;
-
-			@Override
-			protected Nullable<R> get() {
-				while (inner == null || !inner.hasNext()) {
-					if (!Stream.this.hasNext()) {
-						return Nullable.none();
-					}
-					inner = mapper.apply(Stream.this.next());
-				}
-				return Nullable.of(inner.next());
-			}
-		};
+		return new FlatMapStream<T, R>(this, mapper);
 	}
 
 	public Stream<T> distinct() {
-		return new Stream<T>() {
-			Iterator<T> iter;
-
-			@Override
-			protected Nullable<T> get() {
-				if (iter == null) {
-					LinkedHashSet<T> set = new LinkedHashSet<>();
-					while (Stream.this.hasNext()) {
-						set.add(Stream.this.next());
-					}
-					iter = set.iterator();
-				}
-
-				if (iter.hasNext()) {
-					return Nullable.of(iter.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return new DistinctStream<T>(this);
 	}
 
 	public <K extends Comparable<K>> Stream<T> sorted(final Function<T, K> keySelector) {
@@ -320,231 +744,213 @@ public abstract class Stream<T> implements Iterator<T> {
 	}
 
 	public Stream<T> sorted(final Comparator<? super T> comparator) {
-		return new Stream<T>() {
-			Iterator<T> iter;
-
-			@Override
-			protected Nullable<T> get() {
-				if (iter == null) {
-					ArrayList<T> list = new ArrayList<T>();
-					while (Stream.this.hasNext()) {
-						list.add(Stream.this.next());
-					}
-					Collections.sort(list, comparator);
-					iter = list.iterator();
-				}
-				if (iter.hasNext()) {
-					return Nullable.of(iter.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
+		return new SortedStream<T>(this, comparator);
 	}
 
 	public Stream<T> peek(final Consumer<? super T> action) {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				if (Stream.this.hasNext()) {
-					T val = Stream.this.next();
-					action.accept(val);
-					return Nullable.of(val);
-				}
-				return Nullable.none();
-			}
-		};
+		return new PeekStream<T>(this, action);
 	}
 
-	public Stream<T> limit(final long maxSize) {
-		return new Stream<T>() {
-			long i = 0L;
-
-			@Override
-			protected Nullable<T> get() {
-				if (i < maxSize && Stream.this.hasNext()) {
-					i++;
-					return Nullable.of(Stream.this.next());
-				}
-				return Nullable.none();
-			}
-		};
+	public Stream<T> limit(final long count) {
+		return new LimitStream<T>(this, count);
 	}
 
-	public Stream<T> skip(final long n) {
-		return new Stream<T>() {
-			long i = 0L;
-
-			@Override
-			protected Nullable<T> get() {
-				while (i < n && Stream.this.hasNext()) {
-					i++;
-					Stream.this.next();
-				}
-				if (Stream.this.hasNext()) {
-					return Nullable.of(Stream.this.next());
-				} else {
-					return Nullable.none();
-				}
-			}
-		};
-
+	public Stream<T> skip(final long count) {
+		return new SkipStream<T>(this, count);
 	}
 
 	public Stream<T> takeWhile(final Predicate<? super T> predicate) {
-		return new Stream<T>() {
-			@Override
-			protected Nullable<T> get() {
-				if (Stream.this.hasNext()) {
-					T val = Stream.this.next();
-					if (predicate.test(val)) {
-						return Nullable.of(val);
-					}
-				}
-				return Nullable.none();
-			}
-		};
+		return new TakeWhileStream<T>(this, predicate);
+	}
+
+	public <K> Stream<Stream<T>> partitionBy(Function<T, K> keyFactory) {
+		return new PartitionByStream<T, K>(this, keyFactory);
+	}
+
+	public <K> Stream<Stream<T>> partition(int count) {
+		return new PartitionCountStream<T>(this, count);
+	}
+
+	@SuppressWarnings("resource")
+	public <K> Stream<ArrayList<T>> group(int count) {
+		return new PartitionCountStream<T>(this, count).map(x -> x.toList());
+	}
+
+	@SuppressWarnings("resource")
+	public <K> Stream<ArrayList<T>> groupBy(Function<T, K> keyFactory) {
+		return new PartitionByStream<T, K>(this, keyFactory).map(x -> x.toList());
 	}
 
 	public void forEach(final Consumer<? super T> action) {
-		while (Stream.this.hasNext()) {
-			action.accept(Stream.this.next());
+		try (Stream<T> stream = this) {
+			while (stream.hasNext()) {
+				action.accept(stream.next());
+			}
 		}
 	}
 
 	public Object[] toArray() {
-		ArrayList<T> list = new ArrayList<T>();
-		while (Stream.this.hasNext()) {
-			list.add(Stream.this.next());
+		try (Stream<T> stream = this) {
+			ArrayList<T> list = new ArrayList<T>();
+			while (stream.hasNext()) {
+				list.add(stream.next());
+			}
+			return list.toArray();
 		}
-		return list.toArray();
 	}
 
 	public <A> A[] toArray(Function<Integer, A[]> generator) {
-		ArrayList<T> list = new ArrayList<T>();
-		while (Stream.this.hasNext()) {
-			list.add(Stream.this.next());
+		try (Stream<T> stream = this) {
+			ArrayList<T> list = new ArrayList<T>();
+			while (stream.hasNext()) {
+				list.add(stream.next());
+			}
+			return list.toArray(generator.apply(list.size()));
 		}
-		return list.toArray(generator.apply(list.size()));
 	}
 
-	public T reduce(T identity, BinaryOperator<T> accumulator) {
-		T ret = identity;
-		while (Stream.this.hasNext()) {
-			ret = accumulator.apply(ret, Stream.this.next());
+	public T reduce(T seed, BinaryOperator<T> accumulator) {
+		try (Stream<T> stream = this) {
+			T result = seed;
+			while (stream.hasNext()) {
+				result = accumulator.apply(result, stream.next());
+			}
+			return result;
 		}
-		return ret;
 	}
 
 	public Optional<T> reduce(BinaryOperator<T> accumulator) {
-		T val = null;
+		try (Stream<T> stream = this) {
+			T value = null;
 
-		while (Stream.this.hasNext()) {
-			if (val == null) {
-				val = Stream.this.next();
-			} else {
-				val = accumulator.apply(val, Stream.this.next());
+			while (stream.hasNext()) {
+				if (value == null) {
+					value = stream.next();
+				} else {
+					value = accumulator.apply(value, stream.next());
+				}
 			}
-		}
 
-		return Optional.of(val);
+			return Optional.of(value);
+		}
 	}
 
 	public ArrayList<T> toList() {
-		ArrayList<T> list = new ArrayList<T>();
-		while (Stream.this.hasNext()) {
-			list.add(Stream.this.next());
+		try (Stream<T> stream = this) {
+			ArrayList<T> list = new ArrayList<T>();
+			while (stream.hasNext()) {
+				list.add(stream.next());
+			}
+			return list;
 		}
-		return list;
 	}
-	
+
 	public LinkedHashSet<T> toSet() {
-		LinkedHashSet<T> set = new LinkedHashSet<T>();
-		while (Stream.this.hasNext()) {
-			set.add(Stream.this.next());
+		try (Stream<T> stream = this) {
+			LinkedHashSet<T> set = new LinkedHashSet<T>();
+			while (stream.hasNext()) {
+				set.add(stream.next());
+			}
+			return set;
 		}
-		return set;
 	}
 
 	public <K, V> LinkedHashMap<K, V> toMap(Function<T, K> keySelector, Function<T, V> valueSelector) {
-		LinkedHashMap<K, V> map = new LinkedHashMap<K, V>();
-		while (Stream.this.hasNext()) {
-			T item = Stream.this.next();
-			map.put(keySelector.apply(item), valueSelector.apply(item));
+		try (Stream<T> stream = this) {
+			LinkedHashMap<K, V> map = new LinkedHashMap<K, V>();
+			while (stream.hasNext()) {
+				T item = stream.next();
+				map.put(keySelector.apply(item), valueSelector.apply(item));
+			}
+			return map;
 		}
-		return map;
 	}
 
 	public Optional<T> min(Comparator<? super T> comparator) {
-		T ret = null;
-		while (Stream.this.hasNext()) {
-			T val = Stream.this.next();
-			if (ret == null || comparator.compare(val, ret) < 0) {
-				ret = val;
+		try (Stream<T> stream = this) {
+			T result = null;
+			while (stream.hasNext()) {
+				T value = stream.next();
+				if (result == null || comparator.compare(value, result) < 0) {
+					result = value;
+				}
 			}
+			return Optional.of(result);
 		}
-		return Optional.of(ret);
 	}
 
 	public Optional<T> max(Comparator<? super T> comparator) {
-		T ret = null;
-		while (Stream.this.hasNext()) {
-			T val = Stream.this.next();
-			if (ret == null || comparator.compare(ret, val) < 0) {
-				ret = val;
+		try (Stream<T> stream = this) {
+			T result = null;
+			while (stream.hasNext()) {
+				T value = stream.next();
+				if (result == null || comparator.compare(result, value) < 0) {
+					result = value;
+				}
 			}
+			return Optional.of(result);
 		}
-		return Optional.of(ret);
 	}
 
 	public long count() {
-		long c = 0L;
-		while (Stream.this.hasNext()) {
-			Stream.this.next();
-			c++;
+		try (Stream<T> stream = this) {
+			long count = 0L;
+			while (stream.hasNext()) {
+				stream.next();
+				count++;
+			}
+			return count;
 		}
-		return c;
 	}
 
 	public boolean anyMatch(Predicate<? super T> predicate) {
-		while (Stream.this.hasNext()) {
-			if (predicate.test(Stream.this.next())) {
-				return true;
+		try (Stream<T> stream = this) {
+			while (stream.hasNext()) {
+				if (predicate.test(stream.next())) {
+					return true;
+				}
 			}
+			return false;
 		}
-		return false;
 	}
 
 	public boolean allMatch(Predicate<? super T> predicate) {
-		while (Stream.this.hasNext()) {
-			if (!predicate.test(Stream.this.next())) {
-				return false;
+		try (Stream<T> stream = this) {
+			while (stream.hasNext()) {
+				if (!predicate.test(stream.next())) {
+					return false;
+				}
 			}
+			return true;
 		}
-		return true;
 	}
 
 	public boolean noneMatch(Predicate<? super T> predicate) {
-		while (Stream.this.hasNext()) {
-			if (predicate.test(Stream.this.next())) {
-				return false;
+		try (Stream<T> stream = this) {
+			while (stream.hasNext()) {
+				if (predicate.test(stream.next())) {
+					return false;
+				}
 			}
+			return true;
 		}
-		return true;
 	}
 
 	public Optional<T> findFirst() {
-		if (Stream.this.hasNext()) {
-			return Optional.of(Stream.this.next());
+		try (Stream<T> stream = this) {
+			if (stream.hasNext()) {
+				return Optional.of(stream.next());
+			}
+			return Optional.empty();
 		}
-		return Optional.empty();
 	}
 
 	public Optional<T> findAny() {
-		if (Stream.this.hasNext()) {
-			return Optional.of(Stream.this.next());
+		try (Stream<T> stream = this) {
+			if (stream.hasNext()) {
+				return Optional.of(stream.next());
+			}
+			return Optional.empty();
 		}
-		return Optional.empty();
 	}
-
 }
