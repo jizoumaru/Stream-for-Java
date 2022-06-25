@@ -212,12 +212,12 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		@Override
 		protected Holder<T> fetch() {
 			T value = holder == null
-				? seed
-				: next.apply(holder.value());
+					? seed
+					: next.apply(holder.value());
 
 			holder = hasNext.test(value)
-				? Holder.of(value)
-				: Holder.none();
+					? Holder.of(value)
+					: Holder.none();
 
 			return holder;
 		}
@@ -241,8 +241,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		@Override
 		protected Holder<T> fetch() {
 			T value = holder == null
-				? seed
-				: next.apply(holder.value());
+					? seed
+					: next.apply(holder.value());
 
 			holder = Holder.of(value);
 			return holder;
@@ -264,8 +264,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		@Override
 		protected Holder<T> fetch() {
 			return index < array.length
-				? Holder.of(array[index++])
-				: Holder.none();
+					? Holder.of(array[index++])
+					: Holder.none();
 		}
 
 		@Override
@@ -287,8 +287,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 				iterator = iterable.iterator();
 			}
 			return iterator.hasNext()
-				? Holder.of(iterator.next())
-				: Holder.none();
+					? Holder.of(iterator.next())
+					: Holder.none();
 		}
 
 		@Override
@@ -306,8 +306,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		@Override
 		protected Holder<T> fetch() {
 			return iterator.hasNext()
-				? Holder.of(iterator.next())
-				: Holder.none();
+					? Holder.of(iterator.next())
+					: Holder.none();
 		}
 
 		@Override
@@ -353,8 +353,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		@Override
 		protected Holder<U> fetch() {
 			return stream.hasNext()
-				? Holder.of(mapper.apply(stream.next()))
-				: Holder.none();
+					? Holder.of(mapper.apply(stream.next()))
+					: Holder.none();
 		}
 
 		@Override
@@ -380,8 +380,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 				inner = mapper.apply(stream.next());
 			}
 			return inner.hasNext()
-				? Holder.of(inner.next())
-				: Holder.none();
+					? Holder.of(inner.next())
+					: Holder.none();
 		}
 
 		@Override
@@ -414,8 +414,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 			}
 
 			return iterator.hasNext()
-				? Holder.of(iterator.next())
-				: Holder.none();
+					? Holder.of(iterator.next())
+					: Holder.none();
 		}
 
 		@Override
@@ -446,8 +446,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 			}
 
 			return iterator.hasNext()
-				? Holder.of(iterator.next())
-				: Holder.none();
+					? Holder.of(iterator.next())
+					: Holder.none();
 		}
 
 		@Override
@@ -528,8 +528,8 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 			}
 
 			return stream.hasNext()
-				? Holder.of(stream.next())
-				: Holder.none();
+					? Holder.of(stream.next())
+					: Holder.none();
 		}
 
 		@Override
@@ -568,7 +568,7 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 	static class PartitionCountStream<T> extends Stream<Stream<T>> {
 		private final Stream<T> stream;
 		private final int count;
-		int index;
+		private int index;
 
 		public PartitionCountStream(Stream<T> stream, int count) {
 			this.stream = stream;
@@ -586,10 +586,18 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 
 			if (stream.hasNext()) {
 				index = 0;
-				return Holder.of(new PartitionCountInternalStream<T>(stream, count, this));
+				return Holder.of(new PartitionCountInternalStream<T>(this));
 			}
 
 			return Holder.<Stream<T>>none();
+		}
+
+		Holder<T> internalFetch() {
+			if (index < count && stream.hasNext()) {
+				index++;
+				return Holder.of(stream.next());
+			}
+			return Holder.none();
 		}
 
 		@Override
@@ -599,28 +607,19 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 	}
 
 	static class PartitionCountInternalStream<T> extends Stream<T> {
-		private final Stream<T> stream;
-		private final int count;
 		private final PartitionCountStream<T> outer;
 
-		public PartitionCountInternalStream(Stream<T> stream, int count, PartitionCountStream<T> outer) {
-			this.stream = stream;
-			this.count = count;
+		public PartitionCountInternalStream(PartitionCountStream<T> outer) {
 			this.outer = outer;
 		}
 
 		@Override
 		protected Holder<T> fetch() {
-			if (outer.index < count && stream.hasNext()) {
-				outer.index++;
-				return Holder.of(stream.next());
-			}
-			return Holder.none();
+			return outer.internalFetch();
 		}
 
 		@Override
 		protected void internalClose() {
-			stream.close();
 		}
 	}
 
@@ -640,7 +639,7 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		protected Holder<Stream<T>> fetch() {
 			if (keyHolder.exists()) {
 				while (stream.hasNext()
-					&& Objects.equals(keyHolder.value(), keyFactory.apply(stream.peek()))) {
+						&& Objects.equals(keyHolder.value(), keyFactory.apply(stream.peek()))) {
 					stream.next();
 				}
 				keyHolder = Holder.none();
@@ -648,10 +647,18 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 
 			if (stream.hasNext()) {
 				keyHolder = Holder.of(keyFactory.apply(stream.peek()));
-				return Holder.of(new PartitionInternalStream<T, K>(stream, keyFactory, keyHolder.value()));
+				return Holder.of(new PartitionByInternalStream<T, K>(this));
 			}
 
 			return Holder.<Stream<T>>none();
+		}
+		
+		Holder<T> internalFetch() {
+			if (stream.hasNext()
+					&& Objects.equals(keyHolder.value(), keyFactory.apply(stream.peek()))) {
+				return Holder.of(stream.next());
+			}
+			return Holder.none();
 		}
 
 		@Override
@@ -660,24 +667,16 @@ public abstract class Stream<T> implements Iterator<T>, AutoCloseable {
 		}
 	}
 
-	static class PartitionInternalStream<T, K> extends Stream<T> {
-		private final Stream<T> stream;
-		private final Function<T, K> keyFactory;
-		private final K key;
+	static class PartitionByInternalStream<T, K> extends Stream<T> {
+		private final PartitionByStream<T, K> outer;
 
-		public PartitionInternalStream(Stream<T> stream, Function<T, K> keyFactory, K key) {
-			this.stream = stream;
-			this.keyFactory = keyFactory;
-			this.key = key;
+		public PartitionByInternalStream(PartitionByStream<T, K> outer) {
+			this.outer = outer;
 		}
 
 		@Override
 		protected Holder<T> fetch() {
-			if (stream.hasNext()
-				&& Objects.equals(key, keyFactory.apply(stream.peek()))) {
-				return Holder.of(stream.next());
-			}
-			return Holder.none();
+			return outer.internalFetch();
 		}
 
 		@Override
